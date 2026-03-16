@@ -45,12 +45,13 @@ class SheetsMap(TypedDict, total=False):
     re_pla: str
 
 
-class AppSecretJson(TypedDict):
+class AppSecretJson(TypedDict, total=False):
     m_token: str
     m_act_id: str | int
     s_id: str | list[str]
     sheets: SheetsMap
     g_creds: GoogleCredsDict
+    re_mo_filters: list[str]
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,7 @@ def main() -> None:
     spreadsheet_id = normalize_spreadsheet_id(config["s_id"])
     sheet_name_map = config["sheets"]
     google_creds = config["g_creds"]
+    re_mo_filters = normalize_re_mo_filters(config.get("re_mo_filters", []))
 
     print(f"Target Account: ******{act_id[-4:]}")
 
@@ -137,15 +139,27 @@ def main() -> None:
             continue
 
         print(f"Processing: {rule_key} -> {target_sheet_name}")
-        raw_rows = fetch_insights(
-            session=session,
-            act_id=act_id,
-            access_token=meta_token,
-            rule=rule,
-            since_date=since_date,
-            until_date=until_date,
-        )
-        output_rows = transform_rows(rule_key, raw_rows)
+
+        if rule_key == "re_mo":
+            output_rows = fetch_re_mo_filtered_totals(
+                session=session,
+                act_id=act_id,
+                access_token=meta_token,
+                since_date=since_date,
+                until_date=until_date,
+                keywords=re_mo_filters,
+            )
+        else:
+            raw_rows = fetch_insights(
+                session=session,
+                act_id=act_id,
+                access_token=meta_token,
+                rule=rule,
+                since_date=since_date,
+                until_date=until_date,
+            )
+            output_rows = transform_rows(rule_key, raw_rows)
+
         write_sheet(
             spreadsheet=spreadsheet,
             worksheet_name=target_sheet_name,
@@ -291,6 +305,79 @@ def fetch_insights(
     return all_rows
 
 
+def fetch_re_mo_filtered_totals(
+    session: requests.Session,
+    act_id: str,
+    access_token: str,
+    since_date: date,
+    until_date: date,
+    keywords: list[str],
+) -> list[list[Any]]:
+    rows: list[list[Any]] = []
+
+    for keyword in keywords:
+        url = f"{GRAPH_BASE}/{act_id}/insights"
+        params: dict[str, Any] | None = {
+            "access_token": access_token,
+            "level": "account",
+            "fields": "reach",
+            "time_increment": "monthly",
+            "time_range": json.dumps(
+                {
+                    "since": since_date.strftime("%Y-%m-%d"),
+                    "until": until_date.strftime("%Y-%m-%d"),
+                },
+                separators=(",", ":"),
+            ),
+            "filtering": json.dumps(
+                [
+                    {
+                        "field": "campaign.name",
+                        "operator": "CONTAIN",
+                        "value": keyword,
+                    }
+                ],
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ),
+            "limit": 500,
+        }
+
+        while True:
+            response = session.get(url, params=params, timeout=60)
+            response.raise_for_status()
+
+            payload = response.json()
+            if "error" in payload:
+                message = payload["error"].get("message", "Unknown Meta API error")
+                code = payload["error"].get("code", "")
+                subcode = payload["error"].get("error_subcode", "")
+                raise RuntimeError(f"Meta API error: {message} (code={code}, subcode={subcode})")
+
+            data = payload.get("data", [])
+            for item in data:
+                month = normalize_month(item.get("date_start"))
+                if not month:
+                    continue
+                rows.append(
+                    [
+                        month,
+                        f"{keyword}合計",
+                        to_int(item.get("reach")),
+                    ]
+                )
+
+            next_url = payload.get("paging", {}).get("next")
+            if not next_url:
+                break
+
+            url = next_url
+            params = None
+
+    rows.sort(key=lambda x: tuple(str(v) for v in x), reverse=True)
+    return rows
+
+
 def transform_rows(rule_key: str, raw_rows: list[dict[str, Any]]) -> list[list[Any]]:
     rows: list[list[Any]] = []
 
@@ -403,6 +490,20 @@ def normalize_platform(value: Any) -> str:
         "threads": "Threads",
     }
     return platform_map.get(raw, raw)
+
+
+def normalize_re_mo_filters(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    for value in values:
+        keyword = str(value).strip()
+        if not keyword or keyword in seen:
+            continue
+        normalized.append(keyword)
+        seen.add(keyword)
+
+    return normalized
 
 
 def to_int(value: Any) -> int:
