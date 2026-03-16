@@ -39,6 +39,10 @@ class GoogleCredsDict(TypedDict):
 class SheetsMap(TypedDict, total=False):
     re_mo: str
     re_ad: str
+    re_da: str
+    re_gen: str
+    re_age: str
+    re_pla: str
 
 
 class AppSecretJson(TypedDict):
@@ -55,6 +59,8 @@ class ReportRule:
     level: str
     fields: str
     header: list[str]
+    time_increment: str
+    breakdowns: str | None = None
 
 
 REPORT_RULES: dict[str, ReportRule] = {
@@ -63,12 +69,45 @@ REPORT_RULES: dict[str, ReportRule] = {
         level="campaign",
         fields="campaign_name,reach",
         header=["Month", "Campaign name", "Reach"],
+        time_increment="monthly",
     ),
     "re_ad": ReportRule(
         secret_sheet_key="re_ad",
         level="ad",
         fields="ad_name,adset_name,campaign_name,reach,actions",
         header=["Month", "Ad Name", "Adset Name", "Campaign name", "Reach", "Location searches"],
+        time_increment="monthly",
+    ),
+    "re_da": ReportRule(
+        secret_sheet_key="re_da",
+        level="campaign",
+        fields="campaign_name,reach",
+        header=["Daily", "Campaign name", "Reach"],
+        time_increment="1",
+    ),
+    "re_gen": ReportRule(
+        secret_sheet_key="re_gen",
+        level="campaign",
+        fields="campaign_name,reach",
+        header=["Month", "Gender", "Campaign name", "Reach"],
+        time_increment="monthly",
+        breakdowns="gender",
+    ),
+    "re_age": ReportRule(
+        secret_sheet_key="re_age",
+        level="campaign",
+        fields="campaign_name,reach",
+        header=["Month", "Age", "Campaign name", "Reach"],
+        time_increment="monthly",
+        breakdowns="age",
+    ),
+    "re_pla": ReportRule(
+        secret_sheet_key="re_pla",
+        level="campaign",
+        fields="campaign_name,reach",
+        header=["Month", "Platform", "Campaign name", "Reach"],
+        time_increment="monthly",
+        breakdowns="publisher_platform",
     ),
 }
 
@@ -212,7 +251,7 @@ def fetch_insights(
         "access_token": access_token,
         "level": rule.level,
         "fields": rule.fields,
-        "time_increment": "monthly",
+        "time_increment": rule.time_increment,
         "time_range": json.dumps(
             {
                 "since": since_date.strftime("%Y-%m-%d"),
@@ -222,6 +261,9 @@ def fetch_insights(
         ),
         "limit": 500,
     }
+
+    if rule.breakdowns:
+        params["breakdowns"] = rule.breakdowns
 
     all_rows: list[dict[str, Any]] = []
 
@@ -253,11 +295,10 @@ def transform_rows(rule_key: str, raw_rows: list[dict[str, Any]]) -> list[list[A
     rows: list[list[Any]] = []
 
     for item in raw_rows:
-        month = normalize_month(item.get("date_start"))
-        if not month:
-            continue
-
         if rule_key == "re_mo":
+            month = normalize_month(item.get("date_start"))
+            if not month:
+                continue
             rows.append(
                 [
                     month,
@@ -266,6 +307,9 @@ def transform_rows(rule_key: str, raw_rows: list[dict[str, Any]]) -> list[list[A
                 ]
             )
         elif rule_key == "re_ad":
+            month = normalize_month(item.get("date_start"))
+            if not month:
+                continue
             rows.append(
                 [
                     month,
@@ -276,10 +320,57 @@ def transform_rows(rule_key: str, raw_rows: list[dict[str, Any]]) -> list[list[A
                     extract_location_searches(item.get("actions", [])),
                 ]
             )
+        elif rule_key == "re_da":
+            daily = normalize_daily(item.get("date_start"))
+            if not daily:
+                continue
+            rows.append(
+                [
+                    daily,
+                    item.get("campaign_name", ""),
+                    to_int(item.get("reach")),
+                ]
+            )
+        elif rule_key == "re_gen":
+            month = normalize_month(item.get("date_start"))
+            if not month:
+                continue
+            rows.append(
+                [
+                    month,
+                    item.get("gender", ""),
+                    item.get("campaign_name", ""),
+                    to_int(item.get("reach")),
+                ]
+            )
+        elif rule_key == "re_age":
+            month = normalize_month(item.get("date_start"))
+            if not month:
+                continue
+            rows.append(
+                [
+                    month,
+                    item.get("age", ""),
+                    item.get("campaign_name", ""),
+                    to_int(item.get("reach")),
+                ]
+            )
+        elif rule_key == "re_pla":
+            month = normalize_month(item.get("date_start"))
+            if not month:
+                continue
+            rows.append(
+                [
+                    month,
+                    normalize_platform(item.get("publisher_platform", "")),
+                    item.get("campaign_name", ""),
+                    to_int(item.get("reach")),
+                ]
+            )
         else:
             raise RuntimeError(f"Unsupported rule key: {rule_key}")
 
-    rows.sort(key=lambda x: (x[0], str(x[1])), reverse=True)
+    rows.sort(key=lambda x: tuple(str(v) for v in x), reverse=True)
     return rows
 
 
@@ -290,6 +381,28 @@ def normalize_month(date_start: Any) -> str:
     if len(date_str) >= 7:
         return date_str[:7]
     return ""
+
+
+def normalize_daily(date_start: Any) -> str:
+    if not date_start:
+        return ""
+    date_str = str(date_start)
+    if len(date_str) >= 10:
+        return date_str[:10]
+    return ""
+
+
+def normalize_platform(value: Any) -> str:
+    raw = str(value or "").strip()
+    platform_map = {
+        "facebook": "Facebook",
+        "instagram": "Instagram",
+        "messenger": "Messenger",
+        "audience_network": "Audience Network",
+        "oculus": "Oculus",
+        "threads": "Threads",
+    }
+    return platform_map.get(raw, raw)
 
 
 def to_int(value: Any) -> int:
