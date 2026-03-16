@@ -141,7 +141,7 @@ def main() -> None:
         print(f"Processing: {rule_key} -> {target_sheet_name}")
 
         if rule_key == "re_mo":
-            output_rows = fetch_re_mo_filtered_totals(
+            filtered_rows = fetch_re_mo_filtered_totals(
                 session=session,
                 act_id=act_id,
                 access_token=meta_token,
@@ -149,6 +149,16 @@ def main() -> None:
                 until_date=until_date,
                 keywords=re_mo_filters,
             )
+            raw_rows = fetch_insights(
+                session=session,
+                act_id=act_id,
+                access_token=meta_token,
+                rule=rule,
+                since_date=since_date,
+                until_date=until_date,
+            )
+            normal_rows = transform_rows(rule_key, raw_rows)
+            output_rows = filtered_rows + normal_rows
         else:
             raw_rows = fetch_insights(
                 session=session,
