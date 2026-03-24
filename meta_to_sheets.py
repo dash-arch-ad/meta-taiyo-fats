@@ -142,6 +142,14 @@ def main() -> None:
         print(f"Processing: {rule_key} -> {target_sheet_name}")
 
         if rule_key == "re_mo":
+            filtered_rows = fetch_re_mo_filtered_totals(
+                session=session,
+                act_id=act_id,
+                access_token=meta_token,
+                since_date=since_date,
+                until_date=until_date,
+                keywords=re_mo_filters,
+            )
             fixed_filtered_rows = fetch_re_mo_filtered_totals(
                 session=session,
                 act_id=act_id,
@@ -159,7 +167,7 @@ def main() -> None:
                 until_date=until_date,
             )
             normal_rows = transform_rows(rule_key, raw_rows)
-            output_rows = insert_re_mo_fixed_rows(normal_rows, fixed_filtered_rows)
+            output_rows = filtered_rows + fixed_filtered_rows + normal_rows
         else:
             raw_rows = fetch_insights(
                 session=session,
@@ -387,14 +395,6 @@ def fetch_re_mo_filtered_totals(
 
     rows.sort(key=lambda x: tuple(str(v) for v in x), reverse=True)
     return rows
-
-
-def insert_re_mo_fixed_rows(
-    normal_rows: list[list[Any]],
-    fixed_rows: list[list[Any]],
-) -> list[list[Any]]:
-    insert_index = min(2, len(normal_rows))
-    return normal_rows[:insert_index] + fixed_rows + normal_rows[insert_index:]
 
 
 def transform_rows(rule_key: str, raw_rows: list[dict[str, Any]]) -> list[list[Any]]:
