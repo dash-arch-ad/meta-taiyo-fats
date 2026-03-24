@@ -16,6 +16,7 @@ JST = ZoneInfo("Asia/Tokyo")
 GRAPH_API_VERSION = "v25.0"
 GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
 APP_SECRET_ENV = "APP_SECRET_JSON"
+RE_MO_FIXED_FILTER_KEYWORD = "スポンジ_Reach"
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -141,13 +142,13 @@ def main() -> None:
         print(f"Processing: {rule_key} -> {target_sheet_name}")
 
         if rule_key == "re_mo":
-            filtered_rows = fetch_re_mo_filtered_totals(
+            fixed_filtered_rows = fetch_re_mo_filtered_totals(
                 session=session,
                 act_id=act_id,
                 access_token=meta_token,
                 since_date=since_date,
                 until_date=until_date,
-                keywords=re_mo_filters,
+                keywords=[RE_MO_FIXED_FILTER_KEYWORD],
             )
             raw_rows = fetch_insights(
                 session=session,
@@ -158,7 +159,7 @@ def main() -> None:
                 until_date=until_date,
             )
             normal_rows = transform_rows(rule_key, raw_rows)
-            output_rows = filtered_rows + normal_rows
+            output_rows = insert_re_mo_fixed_rows(normal_rows, fixed_filtered_rows)
         else:
             raw_rows = fetch_insights(
                 session=session,
@@ -386,6 +387,14 @@ def fetch_re_mo_filtered_totals(
 
     rows.sort(key=lambda x: tuple(str(v) for v in x), reverse=True)
     return rows
+
+
+def insert_re_mo_fixed_rows(
+    normal_rows: list[list[Any]],
+    fixed_rows: list[list[Any]],
+) -> list[list[Any]]:
+    insert_index = min(2, len(normal_rows))
+    return normal_rows[:insert_index] + fixed_rows + normal_rows[insert_index:]
 
 
 def transform_rows(rule_key: str, raw_rows: list[dict[str, Any]]) -> list[list[Any]]:
